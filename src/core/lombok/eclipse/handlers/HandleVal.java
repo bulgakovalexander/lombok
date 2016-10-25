@@ -21,20 +21,17 @@
  */
 package lombok.eclipse.handlers;
 
-import static lombok.core.handlers.HandlerUtil.*;
 import lombok.ConfigurationKeys;
-import lombok.val;
 import lombok.core.HandlerPriority;
 import lombok.eclipse.DeferUntilPostDiet;
 import lombok.eclipse.EclipseASTAdapter;
 import lombok.eclipse.EclipseASTVisitor;
 import lombok.eclipse.EclipseNode;
-
-import org.eclipse.jdt.internal.compiler.ast.ArrayInitializer;
-import org.eclipse.jdt.internal.compiler.ast.ForStatement;
-import org.eclipse.jdt.internal.compiler.ast.ForeachStatement;
-import org.eclipse.jdt.internal.compiler.ast.LocalDeclaration;
+import lombok.val;
+import org.eclipse.jdt.internal.compiler.ast.*;
 import org.mangosdk.spi.ProviderFor;
+
+import static lombok.core.handlers.HandlerUtil.handleFlagUsage;
 
 /*
  * This class just handles 3 basic error cases. The real meat of eclipse 'val' support is in {@code PatchVal} and {@code PatchValEclipse}.
@@ -71,6 +68,13 @@ public class HandleVal extends EclipseASTAdapter {
 		
 		if (local.initialization != null && local.initialization.getClass().getName().equals("org.eclipse.jdt.internal.compiler.ast.LambdaExpression")) {
 			localNode.addError("'val' is not allowed with lambda expressions.");
+		}
+	}
+	
+	@Override
+	public void visitMethodArgument(EclipseNode argNode, Argument arg, AbstractMethodDeclaration method) {
+		if (EclipseHandlerUtil.typeMatches(val.class, argNode, arg.type)) {
+			argNode.addError("'val' works only on local variables and on foreach loops");
 		}
 	}
 }

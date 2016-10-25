@@ -21,30 +21,21 @@
  */
 package lombok.javac.handlers;
 
-import static lombok.core.handlers.HandlerUtil.*;
-import static lombok.javac.handlers.JavacHandlerUtil.*;
-import lombok.ConfigurationKeys;
-import lombok.val;
-import lombok.core.HandlerPriority;
-import lombok.javac.JavacASTAdapter;
-import lombok.javac.JavacASTVisitor;
-import lombok.javac.JavacNode;
-import lombok.javac.JavacResolution;
-import lombok.javac.ResolutionResetNeeded;
-
-import org.mangosdk.spi.ProviderFor;
-
 import com.sun.tools.javac.code.Flags;
 import com.sun.tools.javac.code.Symtab;
 import com.sun.tools.javac.code.Type;
 import com.sun.tools.javac.tree.JCTree;
-import com.sun.tools.javac.tree.JCTree.JCAnnotation;
-import com.sun.tools.javac.tree.JCTree.JCEnhancedForLoop;
-import com.sun.tools.javac.tree.JCTree.JCExpression;
-import com.sun.tools.javac.tree.JCTree.JCForLoop;
-import com.sun.tools.javac.tree.JCTree.JCNewArray;
-import com.sun.tools.javac.tree.JCTree.JCVariableDecl;
+import com.sun.tools.javac.tree.JCTree.*;
 import com.sun.tools.javac.util.List;
+import lombok.ConfigurationKeys;
+import lombok.core.HandlerPriority;
+import lombok.javac.*;
+import lombok.val;
+import org.mangosdk.spi.ProviderFor;
+
+import static lombok.core.handlers.HandlerUtil.handleFlagUsage;
+import static lombok.javac.handlers.JavacHandlerUtil.recursiveSetGeneratedBy;
+import static lombok.javac.handlers.JavacHandlerUtil.typeMatches;
 
 @ProviderFor(JavacASTVisitor.class)
 @HandlerPriority(65536) // 2^16; resolution needs to work, so if the RHS expression is i.e. a call to a generated getter, we have to run after that getter has been generated.
@@ -78,12 +69,13 @@ public class HandleVal extends JavacASTAdapter {
 			return;
 		}
 		
-		if (local.init instanceof JCNewArray && ((JCNewArray)local.init).elemtype == null) {
+		if (local.init instanceof JCNewArray && ((JCNewArray) local.init).elemtype == null) {
 			localNode.addError("'val' is not compatible with array initializer expressions. Use the full form (new int[] { ... } instead of just { ... })");
 			return;
 		}
 		
-		if (localNode.shouldDeleteLombokAnnotations()) JavacHandlerUtil.deleteImportFromCompilationUnit(localNode, "lombok.val");
+		if (localNode.shouldDeleteLombokAnnotations())
+			JavacHandlerUtil.deleteImportFromCompilationUnit(localNode, "lombok.val");
 		
 		local.mods.flags |= Flags.FINAL;
 		
@@ -157,6 +149,13 @@ public class HandleVal extends JavacASTAdapter {
 			throw e;
 		} finally {
 			recursiveSetGeneratedBy(local.vartype, typeTree, localNode.getContext());
+		}
+	}
+	
+	@Override
+	public void visitMethodArgument(JavacNode argumentNode, JCVariableDecl argument, JCTree.JCMethodDecl method) {
+		if (typeMatches(val.class, argumentNode, argument.vartype)) {
+			argumentNode.addError("'val' works only on local variables and on foreach loops");
 		}
 	}
 }
