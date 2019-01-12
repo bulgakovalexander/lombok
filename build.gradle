@@ -1,0 +1,212 @@
+version = '1.16.11-EXPERIMENTAL-SNAPSHOT'
+def javaVer = org.gradle.internal.jvm.Jvm.current().javaVersion.majorVersion
+
+task wrapper(type: Wrapper) {
+    gradleVersion = '2.12'
+}
+
+buildscript {
+    repositories {
+        mavenCentral()
+    }
+}
+
+apply plugin: 'java'
+apply plugin: 'idea'
+apply plugin: 'maven-publish'
+
+repositories {
+    mavenCentral()
+}
+
+task sourceJar(type: Jar) {
+    classifier "sources"
+}
+
+publishing {
+    repositories {
+        maven {
+            url "maven2"
+        }
+    }
+    publications {
+        lombok(MavenPublication) {
+            groupId 'org.projectlombok'
+            artifactId 'lombok'
+            version project.version
+            artifact jar.archivePath
+            artifact source: sourceJar, classifier: 'src', extension: 'zip'
+        }
+    }
+}
+
+configurations {
+    rtLib
+    rtLib6
+}
+
+sourceSets {
+    stubsStubs {
+        java {
+            srcDirs = ['src/stubsstubs']
+        }
+    }
+    stubs {
+        java {
+            srcDirs = ['src/stubs', 'src/javac-only-stubs']
+        }
+        compileClasspath = sourceSets.stubsStubs.output
+    }
+    utils {
+        java {
+            srcDirs = ['src/utils']
+            exclude "lombok/javac/java6/*.java"
+            exclude "lombok/javac/java7/*.java"
+//            exclude "lombok/javac/java8/*.java"
+        }
+        compileClasspath = configurations.compileOnly
+        output.classesDir = sourceSets.main.output.classesDir
+    }
+
+    main {
+        java {
+            compileClasspath +=
+                    sourceSets.utils.output +
+                            sourceSets.stubs.output
+            srcDirs = [
+                    'src/core',
+                    'src/delombok',
+                    'src/eclipseAgent',
+                    'src/installer',
+                    'src/launch',
+
+            ]
+        }
+        resources {
+            srcDirs = sourceSets.main.java.srcDirs
+            exclude "**/*.java"
+        }
+    }
+
+    test {
+        java {
+            srcDirs = [
+                    'test/bytecode/src',
+                    'test/configuration/src',
+                    'test/core/src',
+                    'test/transform/src'
+            ]
+        }
+        compileClasspath +=
+                sourceSets.main.output +
+                        sourceSets.stubs.output +
+                        sourceSets.utils.output
+        resources {
+            srcDirs = [
+                    'test/bytecode/resource',
+                    'test/configuration/resource',
+                    'test/transform/resource'
+            ]
+        }
+    }
+}
+sourceSets.all {
+    //exclude empty dirs from source sets
+    tasks[processResourcesTaskName].includeEmptyDirs = false
+}
+tasks.withType(JavaCompile) {
+    options.encoding = 'UTF-8'
+}
+
+compileJava {
+    doFirst {
+        options.bootstrapClasspath = sourceSets.stubs.output + options.bootstrapClasspath
+    }
+}
+
+test {
+    systemProperty "file.encoding", "utf-8"
+}
+task class50(type: Copy) {
+    mustRunAfter compileJava
+    from sourceSets.main.output.classesDir
+    include '**/lombok/launch/PatchFixesHider*.*',
+            '**/*Transplants.class'
+    into "${sourceSets.main.output.classesDir}/Class50"
+    includeEmptyDirs = false
+}
+classes.dependsOn class50
+
+task echoProcessor << {
+    def file = new File("${sourceSets.main.output.resourcesDir}/META-INF/services/javax.annotation.processing.Processor")
+    file.parentFile.mkdirs()
+    file.write 'lombok.launch.AnnotationProcessorHider$AnnotationProcessor' +
+            '\n' +
+            'lombok.launch.AnnotationProcessorHider$ClaimingProcessor'
+}
+classes.dependsOn echoProcessor
+
+Properties props = new Properties()
+props.load(new FileInputStream("testenvironment.properties"))
+
+props.each { prop ->
+    ext.set(prop.key, prop.value)
+}
+
+dependencies {
+    rtLib files(project.ext.get('test.location.bootclasspath'))
+    rtLib6 files('lib/openJDK6Environment/rt-openjdk6.jar')
+
+    compileOnly fileTree("lib/build"),
+            fileTree("lib/unexpected"),
+            fileTree(project.ext.get("test.location.ecj"))
+    //for debugging EclipsePatcher
+    //compileOnly 'org.ow2.asm:asm:5.0.1','org.ow2.asm:asm-tree:5.0.1', 'org.ow2.asm:asm-commons:5.0.1'
+
+
+    testCompile 'junit:junit:4.12'
+
+    testCompile fileTree("lib/test").include('*.jar').
+            exclude('junit-junit.jar'),
+            fileTree(project.ext.get("test.location.ecj")),
+            fileTree(project.ext.get("test.location.javac"))
+
+}
+
+tasks.withType(JavaCompile) {
+    sourceCompatibility = 1.7
+    targetCompatibility = 1.7
+    options.fork = true
+}
+
+[compileJava, compileStubsStubsJava, compileStubsJava].each {
+    it.options.bootClasspath = configurations.rtLib.asPath
+}
+compileUtilsJava.options.bootClasspath = (sourceSets.stubs.output + configurations.rtLib6).asPath
+
+jar {
+    destinationDir = file('dist')
+    archiveName = baseName + '.' + extension
+    manifest {
+        attributes(
+                "Premain-Class": "lombok.launch.Agent",
+                "Agent-Class": "lombok.launch.Agent",
+                "Can-Redefine-Classes": "true",
+                "Main-Class": "lombok.launch.Main",
+                "Lombok-Version": version
+        )
+    }
+}
+
+test {
+    jvmArgs "-javaagent:${jar.archivePath}"
+    //,
+    //        "-Xrunjdwp:transport=dt_socket,server=y,suspend=y,address=5005"
+    systemProperty 'delombok.bootclasspath', configurations.rtLib.asPath
+    //use all classes except RunAllTests
+    include 'lombok/RunAllTests.class'
+    //include 'lombok/RunTransformTests.class'
+    testLogging.showStandardStreams = true
+}
+//for supporing eclipse compiler
+test.dependsOn jar
