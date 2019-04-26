@@ -12,7 +12,7 @@ buildscript {
 }
 
 plugins {
-    id("java")
+    id("java-library")
 }
 
 apply {
@@ -58,13 +58,11 @@ dependencies {
 
     testCompile("junit:junit:4.12")
 
-
     testCompile(fileTree("lib/test").include("*.jar").exclude("junit-junit.jar"))
     testCompile(fileTree(project.ext.get("test.location.ecj") as String))
     testCompile(fileTree(project.ext.get("test.location.javac") as String))
 
 }
-
 
 
 sourceSets {
@@ -176,7 +174,8 @@ tasks.withType<JavaCompile> {
 
     options.encoding = "UTF-8"
     options.compilerArgs = listOf("--release", "8")
-
+    sourceCompatibility = "1.8"
+    targetCompatibility = sourceCompatibility
 
     if (name in listOf("compileStubsStubsJava", "compileStubsJava")) {
         options.compilerArgs = listOf("--release", "8")
@@ -227,7 +226,7 @@ tasks.withType<JavaCompile> {
         val destinationDir = this.destinationDir
 
         doLast {
-            source.forEach { f->
+            source.forEach { f ->
                 val fileName = f.nameWithoutExtension + ".class"
                 val classFile = File(mainOutput, fileName)
                 val copyTo = classFile.copyTo(File(destinationDir, fileName))
@@ -244,8 +243,8 @@ tasks.withType<JavaCompile> {
                 f.renameTo(File(f.parentFile, f!!.nameWithoutExtension + ".SCL.lombok"))
             }
         }
-
     }
+
 }
 
 tasks.create<JavaCompile>("coreBySpiProcessor") {
@@ -304,11 +303,20 @@ tasks.withType<Jar> {
 
 tasks.withType<Test> {
     val jar = tasks["jar"] as Jar
-
-    jvmArgs("-javaagent:${jar.archivePath}")
-    //,
+    
     //        "-Xrunjdwp:transport=dt_socket,server=y,suspend=y,address=5005"
-//    systemProperty("delombok.bootclasspath", testBootclasspath.asPath)
+    this.jvmArgs(listOf(
+            "-javaagent:${jar.archivePath}",
+//            "-Ddelombok.bootclasspath", testBootclasspath.asPath,
+            "--add-opens", "jdk.compiler/com.sun.tools.javac.code=ALL-UNNAMED",
+            "--add-opens", "jdk.compiler/com.sun.tools.javac.file=ALL-UNNAMED",
+            "--add-opens", "jdk.compiler/com.sun.tools.javac.main=ALL-UNNAMED",
+            "--add-opens", "jdk.compiler/com.sun.tools.javac.model=ALL-UNNAMED",
+            "--add-opens", "jdk.compiler/com.sun.tools.javac.processing=ALL-UNNAMED",
+            "--add-opens", "jdk.compiler/com.sun.tools.javac.tree=ALL-UNNAMED",
+            "--add-opens", "jdk.compiler/com.sun.tools.javac.util=ALL-UNNAMED",
+            "--add-opens", "jdk.compiler/com.sun.tools.javac.parser=ALL-UNNAMED"
+    ))
     //use all classes except RunAllTests
 //    include("lombok/RunAllTests.class")
     include("lombok/transform/RunTransformTests.class")
