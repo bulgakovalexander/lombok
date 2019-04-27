@@ -173,8 +173,8 @@ tasks.withType<JavaCompile> {
     val stubsStubsOutput = sourceSets["stubsStubs"].output.classesDirs
 
     options.encoding = "UTF-8"
-    options.compilerArgs = listOf("--release", "8")
-    sourceCompatibility = "1.8"
+//    options.compilerArgs = listOf("--release", "6")
+    sourceCompatibility = "1.6"
     targetCompatibility = sourceCompatibility
 
     if (name in listOf("compileStubsStubsJava", "compileStubsJava")) {
@@ -185,7 +185,7 @@ tasks.withType<JavaCompile> {
     }
 
     if (this.name == "compileUtils1Java") {
-        options.compilerArgs = listOf("--release", "8")
+        options.compilerArgs = listOf("--release", "6")
         sourceCompatibility = "1.5"
         targetCompatibility = sourceCompatibility
         options.bootstrapClasspath = stubsStubsOutput + stubsOutput + rtLib8.asFileTree
@@ -245,6 +245,10 @@ tasks.withType<JavaCompile> {
         }
     }
 
+
+    if (name == "compileJava") {
+        options.bootstrapClasspath =  stubsOutput + rtLib8.asFileTree
+    }
 }
 
 tasks.create<JavaCompile>("coreBySpiProcessor") {
@@ -303,7 +307,7 @@ tasks.withType<Jar> {
 
 tasks.withType<Test> {
     val jar = tasks["jar"] as Jar
-    
+
     //        "-Xrunjdwp:transport=dt_socket,server=y,suspend=y,address=5005"
     this.jvmArgs(listOf(
             "-javaagent:${jar.archivePath}",
@@ -322,6 +326,7 @@ tasks.withType<Test> {
     include("lombok/transform/RunTransformTests.class")
     testLogging.showStandardStreams = true
 }
+
 //for supporing eclipse compiler
 tasks["test"].dependsOn(tasks["jar"])
 
