@@ -31,6 +31,7 @@ import java.util.ArrayDeque;
 import java.util.Map;
 
 import javax.lang.model.type.TypeKind;
+import javax.tools.Diagnostic;
 import javax.tools.JavaFileObject;
 
 import lombok.Lombok;
@@ -443,4 +444,9 @@ public class JavacResolution {
 	public static boolean platformHasTargetTyping() {
 		return Javac.getJavaCompilerVersion() >= 8;
 	}
+	
+	public java.util.List<Diagnostic> getSuppressedDiagnostics() {
+		return messageSuppressor.getSuppressedDiagnostics();
+	}
+	
 }

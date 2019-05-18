@@ -26,11 +26,13 @@ import java.io.OutputStream;
 import java.io.PrintWriter;
 import java.lang.reflect.Field;
 import java.util.LinkedList;
+import java.util.List;
 import java.util.Map;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
+import javax.tools.Diagnostic;
 import javax.tools.DiagnosticListener;
 import javax.tools.JavaFileObject;
 
@@ -58,6 +60,7 @@ public final class CompilerMessageSuppressor {
 	private final Context context;
 	
 	private static final ThreadLocal<Queue<?>> queueCache = new ThreadLocal<Queue<?>>();
+	private final LinkedList<Diagnostic> suppressedDiagnostics = new LinkedList<Diagnostic>();
 	
 	enum Writers {
 		ERROR("errWriter", "ERROR"),
@@ -113,8 +116,7 @@ public final class CompilerMessageSuppressor {
 		if (deferDiagnosticsField != null) try {
 			if (Boolean.TRUE.equals(deferDiagnosticsField.get(log))) {
 				queueCache.set((Queue<?>) deferredDiagnosticsField.get(log));
-				Queue<?> empty = new LinkedList<Object>();
-				deferredDiagnosticsField.set(log, empty);
+				deferredDiagnosticsField.set(log, suppressedDiagnostics);
 			}
 		} catch (Exception e) {}
 		
@@ -123,8 +125,7 @@ public final class CompilerMessageSuppressor {
 			Field field = getDeferredField(handler);
 			if (field != null) {
 				queueCache.set((Queue<?>) field.get(handler));
-				Queue<?> empty = new LinkedList<Object>();
-				field.set(handler, empty);
+				field.set(handler, suppressedDiagnostics);
 			}
 		} catch (Exception e) {}
 		
@@ -247,7 +248,7 @@ public final class CompilerMessageSuppressor {
 	private static WriterField createWriterField(Writers w) {
 		// jdk9
 		try {
-			Field writers = getDeclaredField(Log.class, "writer");
+			Field writers = getDeclaredField(Log.class, "writers");
 			if (writers != null) {
 				Class<?> kindsClass = Class.forName("com.sun.tools.javac.util.Log$WriterKind");
 				for (Object enumConstant : kindsClass.getEnumConstants()) {
@@ -345,5 +346,9 @@ public final class CompilerMessageSuppressor {
 			}
 			writer = null;
 		}
+	}
+	
+	public List<Diagnostic> getSuppressedDiagnostics() {
+		return suppressedDiagnostics;
 	}
 }

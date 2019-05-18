@@ -277,6 +277,10 @@ public class JavacNode extends lombok.core.LombokNode<JavacAST, JavacNode, JCTre
 		ast.printMessage(Diagnostic.Kind.WARNING, message, null, pos, false);
 	}
 	
+	public void printMessage(Diagnostic.Kind kind, String message, DiagnosticPosition pos) {
+		ast.printMessage(kind, message, this, pos, false);
+	}
+	
 	@Override public boolean hasAnnotation(Class<? extends Annotation> type) {
 		return JavacHandlerUtil.hasAnnotationAndDeleteIfNeccessary(type, this);
 	}

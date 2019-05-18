@@ -44,10 +44,25 @@ import com.sun.tools.javac.tree.JCTree.JCAnnotation;
 import com.sun.tools.javac.tree.JCTree.JCEnhancedForLoop;
 import com.sun.tools.javac.tree.JCTree.JCExpression;
 import com.sun.tools.javac.tree.JCTree.JCForLoop;
+import com.sun.tools.javac.tree.JCTree.JCIdent;
 import com.sun.tools.javac.tree.JCTree.JCLiteral;
 import com.sun.tools.javac.tree.JCTree.JCNewArray;
 import com.sun.tools.javac.tree.JCTree.JCVariableDecl;
+import com.sun.tools.javac.util.JCDiagnostic;
+import com.sun.tools.javac.util.JCDiagnostic.DiagnosticPosition;
 import com.sun.tools.javac.util.List;
+import com.sun.tools.javac.util.Name;
+import lombok.javac.Javac;
+import lombok.permit.Permit;
+
+import javax.tools.Diagnostic;
+import java.lang.reflect.Field;
+import java.util.Collections;
+
+import static lombok.Lombok.sneakyThrow;
+import static lombok.javac.JavacResolution.createJavaLangObject;
+import static lombok.javac.handlers.JavacHandlerUtil.recursiveSetGeneratedBy;
+import static lombok.javac.handlers.JavacHandlerUtil.typeMatches;
 
 @ProviderFor(JavacASTVisitor.class)
 @HandlerPriority(HANDLE_DELEGATE_PRIORITY + 100) // run slightly after HandleDelegate; resolution needs to work, so if the RHS expression is i.e. a call to a generated getter, we have to run after that getter has been generated.
@@ -56,6 +71,41 @@ public class HandleVal extends JavacASTAdapter {
 	
 	private static boolean eq(String typeTreeToString, String key) {
 		return typeTreeToString.equals(key) || typeTreeToString.equals("lombok." + key) || typeTreeToString.equals("lombok.experimental." + key);
+	}
+	
+	private static void printDiagnostic(Diagnostic diagnostic, JavacNode localNode) {
+		String message = diagnostic.getMessage(null);
+		DiagnosticPosition pos = diagnostic instanceof JCDiagnostic ? getDiagnosticPosition((JCDiagnostic) diagnostic) : localNode.get();
+		localNode.printMessage(diagnostic.getKind(), message, pos);
+	}
+	
+	private static DiagnosticPosition getDiagnosticPosition(JCDiagnostic jcDiagnostic) {
+		try {
+			Field positionFld = Permit.getField(JCDiagnostic.class, "position");
+			return (DiagnosticPosition) positionFld.get(jcDiagnostic);
+		} catch (IllegalAccessException e) {
+			throw sneakyThrow(e);
+		} catch (NoSuchFieldException e) {
+			throw sneakyThrow(e);
+		}
+	}
+	
+	private static boolean isStubIncompatibleTypeError(JCIdent stub, Diagnostic diagnostic) {
+		if (stub == null) return false;
+		else if (diagnostic instanceof JCDiagnostic) {
+			JCDiagnostic jcDiagnostic = (JCDiagnostic) diagnostic;
+			DiagnosticPosition diagnosticPosition = getDiagnosticPosition(jcDiagnostic);
+			if (diagnosticPosition instanceof JCIdent) {
+				JCIdent errElement = (JCIdent) diagnosticPosition;
+				Name name = stub.name;
+				String nameStr = name != null ? name.toString() : "";
+				Name errName = errElement.name;
+				String errNameStr = errName != null ? errName.toString() : "";
+				return stub.getKind() == errElement.getKind() && stub.pos == errElement.pos &&
+						nameStr.equals(errNameStr);
+			}
+		}
+		return false;
 	}
 	
 	@SuppressWarnings("deprecation") @Override
@@ -115,12 +165,19 @@ public class HandleVal extends JavacASTAdapter {
 			local.mods.annotations = local.mods.annotations == null ? List.of(valAnnotation) : local.mods.annotations.append(valAnnotation);
 		}
 		
-		if (JavacResolution.platformHasTargetTyping()) {
-			local.vartype = localNode.getAst().getTreeMaker().Ident(localNode.getAst().toName("___Lombok_VAL_Attrib__"));
+		JCIdent stub = null;
+		/*if (Javac.getJavaCompilerVersion() >= 10) {
+			local.vartype = null;
+		} else */if (JavacResolution.platformHasTargetTyping()) {
+			stub = localNode.getAst().getTreeMaker().Ident(localNode.getAst().toName("___Lombok_VAL_Attrib__"));
+			local.vartype = stub;
+			local.vartype.pos = typeTree.pos;
 		} else {
 			local.vartype = JavacResolution.createJavaLangObject(localNode.getAst());
+			local.vartype.pos = typeTree.pos;
 		}
 		
+		java.util.List<Diagnostic> suppressedDiagnostics = Collections.emptyList();
 		Type type;
 		try {
 			if (rhsOfEnhancedForLoop == null) {
@@ -131,6 +188,7 @@ public class HandleVal extends JavacASTAdapter {
 					JavacResolution resolver = new JavacResolution(localNode.getContext());
 					try {
 						type = ((JCExpression) resolver.resolveMethodMember(localNode).get(local.init)).type;
+						suppressedDiagnostics = resolver.getSuppressedDiagnostics();
 					} catch (RuntimeException e) {
 						System.err.println("Exception while resolving: " + localNode + "(" + localNode.getFileName() + ")");
 						throw e;
@@ -142,6 +200,7 @@ public class HandleVal extends JavacASTAdapter {
 							JavacResolution resolver = new JavacResolution(localNode.getContext());
 							local.type = Symtab.instance(localNode.getContext()).unknownType;
 							type = ((JCExpression) resolver.resolveMethodMember(localNode).get(local.init)).type;
+							suppressedDiagnostics = resolver.getSuppressedDiagnostics();
 						} catch (RuntimeException e) {
 							System.err.println("Exception while resolving: " + localNode + "(" + localNode.getFileName() + ")");
 							throw e;
@@ -152,12 +211,26 @@ public class HandleVal extends JavacASTAdapter {
 				if (rhsOfEnhancedForLoop.type == null) {
 					JavacResolution resolver = new JavacResolution(localNode.getContext());
 					type = ((JCExpression) resolver.resolveMethodMember(localNode.directUp()).get(rhsOfEnhancedForLoop)).type;
+					suppressedDiagnostics = resolver.getSuppressedDiagnostics();
 				} else {
 					type = rhsOfEnhancedForLoop.type;
 				}
 			}
 			
-			try {
+			boolean errorPrinted = false;
+			if (type.isErroneous()) {
+				for (Diagnostic diagnostic : suppressedDiagnostics) {
+					if (isStubIncompatibleTypeError(stub, diagnostic)) continue;
+					printDiagnostic(diagnostic, localNode);
+					boolean isError = diagnostic.getKind() == Diagnostic.Kind.ERROR;
+					errorPrinted = errorPrinted || isError;
+				}
+				if (errorPrinted) {
+					local.vartype = createJavaLangObject(localNode.getAst());
+				}
+			}
+			
+			if (!errorPrinted) try {
 				JCExpression replacement;
 				
 				if (rhsOfEnhancedForLoop != null) {
